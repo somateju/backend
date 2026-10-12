@@ -1,7 +1,11 @@
+
 package com.hostel.hostel_management.controller;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,97 +30,168 @@ public class MatchingController {
         this.matchingService = matchingService;
     }
 
+    // Calculate compatibility between two specific students
     @GetMapping("/{student1Id}/{student2Id}")
-    public String calculateMatch(
+    public ResponseEntity<?> calculateMatch(
             @PathVariable Long student1Id,
             @PathVariable Long student2Id) {
 
-        Preference p1 =
-                preferenceRepository.findAll()
-                        .stream()
-                        .filter(p ->
-                                p.getStudent()
-                                        .getId()
-                                        .equals(student1Id))
-                        .findFirst()
-                        .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Preference not found for Student 1"));
+        List<Preference> allPreferences =
+                preferenceRepository.findAll();
 
-        Preference p2 =
-                preferenceRepository.findAll()
-                        .stream()
-                        .filter(p ->
-                                p.getStudent()
-                                        .getId()
-                                        .equals(student2Id))
-                        .findFirst()
-                        .orElseThrow(() ->
-                                new RuntimeException(
-                                        "Preference not found for Student 2"));
+        Preference p1 = findPreference(allPreferences, student1Id);
+        Preference p2 = findPreference(allPreferences, student2Id);
 
-        // Same gender check
-        if (!p1.getStudent()
-                .getGender()
-                .equalsIgnoreCase(
-                        p2.getStudent().getGender())) {
-
-            return "Students must be of the same gender";
+        if (p1 == null) {
+            return ResponseEntity.badRequest()
+                    .body("First student has not submitted preferences.");
         }
 
-        int score =
-                matchingService.calculateCompatibility(
-                        p1,
-                        p2);
+        if (p2 == null) {
+            return ResponseEntity.badRequest()
+                    .body("Second student has not submitted preferences.");
+        }
 
-        return "Compatibility: "
-                + score
-                + "%";
+        if (p1.getStudent() == null || p2.getStudent() == null
+                || p1.getStudent().getGender() == null
+                || p2.getStudent().getGender() == null) {
+            return ResponseEntity.badRequest()
+                    .body("Gender information is missing.");
+        }
+
+        if (!p1.getStudent().getGender()
+                .equalsIgnoreCase(p2.getStudent().getGender())) {
+            return ResponseEntity.badRequest()
+                    .body("Students must be of the same gender.");
+        }
+
+        int score = matchingService.calculateCompatibility(p1, p2);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("student1Id", student1Id);
+        result.put("student2Id", student2Id);
+        result.put("compatibility", score);
+
+        return ResponseEntity.ok(result);
     }
 
-
+    // Get the best roommate automatically
     @GetMapping("/best/{studentId}")
-    public String findBestMatch(
+    public ResponseEntity<?> findBestMatch(
             @PathVariable Long studentId) {
 
         List<Preference> allPreferences =
                 preferenceRepository.findAll();
 
         Preference target =
-                allPreferences.stream()
-                        .filter(p ->
-                                p.getStudent()
-                                        .getId()
-                                        .equals(studentId))
-                        .findFirst()
-                        .orElse(null);
+                findPreference(allPreferences, studentId);
 
         if (target == null) {
-
-            return "Please submit your preferences first";
+            return ResponseEntity.badRequest()
+                    .body("Please submit your preferences first.");
         }
 
-        Preference bestMatch =
-                matchingService.findBestMatch(
+        List<Preference> matches =
+                matchingService.findAllMatches(
                         target,
-                        allPreferences);
+                        allPreferences
+                );
 
-        if (bestMatch == null) {
-
-            return "No suitable roommate found";
+        if (matches.isEmpty()) {
+            return ResponseEntity.ok(
+                    Map.of(
+                            "message",
+                            "No eligible roommate found. Other students may need to submit their preferences."
+                    )
+            );
         }
 
-        int score =
-                matchingService.calculateCompatibility(
-                        target,
-                        bestMatch);
+        Preference best = matches.get(0);
 
-        return "Best Match: "
-                + bestMatch.getStudent().getName()
-                + " | Student ID: "
-                + bestMatch.getStudent().getId()
-                + " | Compatibility: "
-                + score
-                + "%";
+        Map<String, Object> result = new HashMap<>();
+        result.put("studentId", best.getStudent().getId());
+        result.put("name", best.getStudent().getName());
+        result.put(
+                "compatibility",
+                matchingService.calculateCompatibility(target, best)
+        );
+
+        return ResponseEntity.ok(result);
+    }
+
+    // Get all eligible roommates, ranked by compatibility
+    @GetMapping("/all/{studentId}")
+    public ResponseEntity<?> findAllMatches(
+            @PathVariable Long studentId) {
+
+        List<Preference> allPreferences =
+                preferenceRepository.findAll();
+
+        Preference target =
+                findPreference(allPreferences, studentId);
+
+        if (target == null) {
+            return ResponseEntity.badRequest()
+                    .body("Please submit your preferences first.");
+        }
+
+        List<Preference> matches =
+                matchingService.findAllMatches(
+                        target,
+                        allPreferences
+                );
+
+        List<Map<String, Object>> results =
+                matches.stream()
+                        .map(preference -> {
+
+                            Map<String, Object> item =
+                                    new HashMap<>();
+
+                            item.put(
+                                    "studentId",
+                                    preference.getStudent().getId()
+                            );
+
+                            item.put(
+                                    "name",
+                                    preference.getStudent().getName()
+                            );
+
+                            item.put(
+                                    "branch",
+                                    preference.getStudent().getBranch()
+                            );
+
+                            item.put(
+                                    "year",
+                                    preference.getStudent().getYear()
+                            );
+
+                            item.put(
+                                    "compatibility",
+                                    matchingService.calculateCompatibility(
+                                            target,
+                                            preference
+                                    )
+                            );
+
+                            return item;
+                        })
+                        .toList();
+
+        return ResponseEntity.ok(results);
+    }
+
+    private Preference findPreference(
+            List<Preference> preferences,
+            Long studentId) {
+
+        return preferences.stream()
+                .filter(p -> p.getStudent() != null)
+                .filter(p -> p.getStudent().getId() != null)
+                .filter(p -> p.getStudent().getId().equals(studentId))
+                .findFirst()
+                .orElse(null);
     }
 }

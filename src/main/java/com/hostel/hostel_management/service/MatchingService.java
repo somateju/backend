@@ -1,6 +1,9 @@
+
 package com.hostel.hostel_management.service;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 import org.springframework.stereotype.Service;
 
@@ -9,91 +12,123 @@ import com.hostel.hostel_management.entity.Preference;
 @Service
 public class MatchingService {
 
+    // Calculate compatibility out of 100
     public int calculateCompatibility(
             Preference p1,
             Preference p2) {
 
+        if (p1 == null || p2 == null) {
+            return 0;
+        }
+
         int score = 0;
 
-        if (p1.getSleepSchedule()
-                .equalsIgnoreCase(
-                        p2.getSleepSchedule())) {
+        // Sleep schedule: 20 marks
+        if (same(p1.getSleepSchedule(), p2.getSleepSchedule())) {
             score += 20;
         }
 
-        if (p1.getStudyHabit()
-                .equalsIgnoreCase(
-                        p2.getStudyHabit())) {
+        // Study habits: 20 marks
+        if (same(p1.getStudyHabit(), p2.getStudyHabit())) {
             score += 20;
         }
 
-        if (p1.getCleanliness()
-                .equalsIgnoreCase(
-                        p2.getCleanliness())) {
+        // Cleanliness: 20 marks
+        if (same(p1.getCleanliness(), p2.getCleanliness())) {
             score += 20;
         }
 
-        if (p1.getFoodPreference()
-                .equalsIgnoreCase(
-                        p2.getFoodPreference())) {
+        // Food preference: 15 marks
+        if (same(p1.getFoodPreference(), p2.getFoodPreference())) {
             score += 15;
         }
 
-        if (p1.getSmokingPreference()
-                .equalsIgnoreCase(
-                        p2.getSmokingPreference())) {
+        // Smoking preference: 15 marks
+        if (same(p1.getSmokingPreference(), p2.getSmokingPreference())) {
             score += 15;
         }
 
-        if (p1.getRoomType()
-                .equalsIgnoreCase(
-                        p2.getRoomType())) {
+        // Room type: 10 marks
+        if (same(p1.getRoomType(), p2.getRoomType())) {
             score += 10;
         }
 
         return score;
     }
 
+    // Compare values safely, ignoring letter case and extra spaces
+    private boolean same(String value1, String value2) {
+
+        return value1 != null
+                && value2 != null
+                && value1.trim().equalsIgnoreCase(value2.trim());
+    }
+
+    // Check whether two students have the same gender
+    private boolean sameGender(
+            Preference p1,
+            Preference p2) {
+
+        if (p1.getStudent() == null || p2.getStudent() == null) {
+            return false;
+        }
+
+        String gender1 = p1.getStudent().getGender();
+        String gender2 = p2.getStudent().getGender();
+
+        return same(gender1, gender2);
+    }
+
+    // Get all eligible roommates, ordered from highest to lowest score
+    public List<Preference> findAllMatches(
+            Preference target,
+            List<Preference> allPreferences) {
+
+        if (target == null || target.getStudent() == null
+                || target.getStudent().getId() == null) {
+            return List.of();
+        }
+
+        Long targetStudentId = target.getStudent().getId();
+
+        return allPreferences.stream()
+                .filter(Objects::nonNull)
+                .filter(p -> p.getStudent() != null)
+                .filter(p -> p.getStudent().getId() != null)
+                // Exclude the logged-in student
+                .filter(p -> !p.getStudent().getId().equals(targetStudentId))
+                // Only students of the same gender
+                .filter(p -> sameGender(target, p))
+                // Only students with saved preferences
+                .filter(p ->
+                        p.getSleepSchedule() != null
+                        && p.getStudyHabit() != null
+                        && p.getCleanliness() != null
+                        && p.getFoodPreference() != null
+                        && p.getSmokingPreference() != null
+                        && p.getRoomType() != null)
+                // Highest compatibility first
+                .sorted(
+                        Comparator.comparingInt(
+                                (Preference p) ->
+                                        calculateCompatibility(target, p)
+                        ).reversed()
+                )
+                .toList();
+    }
+
+    // Automatically find the highest-scoring roommate
     public Preference findBestMatch(
             Preference target,
             List<Preference> allPreferences) {
 
-        Preference bestMatch = null;
+        List<Preference> matches =
+                findAllMatches(target, allPreferences);
 
-        int highestScore = -1;
-
-        for (Preference preference : allPreferences) {
-
-            // Do not match the student with themselves
-            if (preference.getStudent()
-                    .getId()
-                    .equals(
-                            target.getStudent().getId())) {
-                continue;
-            }
-
-            // Only match students of the same gender
-            if (!preference.getStudent()
-                    .getGender()
-                    .equalsIgnoreCase(
-                            target.getStudent().getGender())) {
-                continue;
-            }
-
-            int score =
-                    calculateCompatibility(
-                            target,
-                            preference
-                    );
-
-            if (score > highestScore) {
-
-                highestScore = score;
-
-                bestMatch = preference;
-            }
+        if (matches.isEmpty()) {
+            return null;
         }
 
-        return bestMatch;
+        return matches.get(0);
     }
 }
